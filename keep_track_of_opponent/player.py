@@ -207,6 +207,7 @@ class Player(Bot):
 
         pass
 
+    #active is the person that is dealer
     def handle_round_over(self, game_state, terminal_state, active):
         self.netgain += terminal_state.deltas[active]
         previous_state = terminal_state.previous_state
@@ -314,43 +315,55 @@ class Player(Bot):
         #Player statistics are updated at the end of each round, iterating through all previous states
         #0th index player is small blind
 
-        print (self.opp_preflop_raise)
-        #First, we will casework what happened to cause round to terminate
-        if terminal_state.deltas[active] < 0 and previous_state.pips[active] < previous_state.pips[1-active]: #You fold
-            print (previous_state.street, 'me', 'fold')
-            self.update_stats(previous_state.street, 'me', 'fold')
-        elif terminal_state.deltas[active] > 0 and previous_state.pips[active] > previous_state.pips[1-active]: #Opp folds
-            print(previous_state.street, 'opp', 'fold')
-            self.update_stats(previous_state.street, 'opp', 'fold')
-        elif previous_state.pips[0] == previous_state.pips[1] and previous_state.pips[0] > 0: #One person calls and not all in
-            if previous_state.button%2 == active:
-                print (previous_state.street, 'me', 'call')
-                self.update_stats(previous_state.street, 'me', 'call')
-            else:
-                print (previous_state.street, 'opp', 'call')
-                self.update_stats(previous_state.street, 'opp', 'call')
+        #First, check for a player folding
+        if terminal_state.deltas[active] > 0 and previous_state.pips[0] != previous_state.pips[1]:
+            self.update_stats(self, previous_state.street, 'opp', 'fold')
+        if terminal_state.deltas[active] < 0 and previous_state.pips[0] != previous_state.pips[1]:
+            self.update_stats(self, previous_state.street, 'me', 'fold')
 
+
+        raise_num = 0
         #Then, we iterate backwards to the beginning
         while previous_state.previous_state:
-            if previous_state.stacks == [0,0]:
+            all_in = False
+            if previous_state.stacks == [0,0]: # If both players are all-in, don't record that they check
                 previous_state = previous_state.previous_state
                 continue
-            if previous_state.street - previous_state.previous_state.street != 0:
-                action = 'call'
-            elif previous_state.pips == previous_state.previous_state.pips:
+            if (previous_state.street != previous_state.previous_state.street) and previous_state.previous_state.pips != [0,0]: 
+                # Players don't take action when the round state increases in street AND the previous street ended in a call
+                previous_state = previous_state.previous_state
+                continue
+            if previous_state.pips == [0,0]:
+                raise_num = 0
                 action = 'check'
-            elif previous_state.previous_state.pips == [0,0]:
+            elif previous_state.pips[0] == previous_state.pips[1]:
+                raise_num = 0
+                action = 'call'
+                if previous_state.stacks == [0,0]:
+                    all_in = True
+            elif previous_state.previous_state.pips[0] == 0 and previous_state.previous_state.pips[1] == 0:
+                raise_num = 0
                 action = 'bet'
             else:
-                action = 'raise'
-            if previous_state.button == active:
+                if raise_num < 2:
+                    action = 'raise'
+                    raise_num += 1
+                else:
+                    previous_state = previous_state.previous_state
+                    continue
+            if (active + previous_state.previous_state.button) % 2 == 0:
                 player = 'me'
             else:
                 player = 'opp'
-            print (previous_state.street, player, action)
-            self.update_stats(previous_state.street, player, action)
+            #print (game_state.round_num, previous_state.street, player, action)
+            self.update_stats(previous_state.street, player, action, all_in)
             previous_state = previous_state.previous_state
 
+        if game_state.round_num % 100 == 0:
+            print ('Opp preflop raise: ', self.opp_preflop_raise)
+            print ('Opp flop raise: ', self.opp_flop_raise)
+            print ('Opp turn raise: ', self.opp_turn_raise)
+            print ('Opp river raise: ', self.opp_river_raise)
         previous_state = terminal_state.previous_state
 
         return
@@ -358,7 +371,8 @@ class Player(Bot):
     #given the street and action, update stats
     #valid actions for this function are "check", bet", "fold", "call", "raise"
     #valid players for this function are "me" and "opp"
-    def update_stats(self, street, player, action):
+    #set allin to be True if calling resulted in player being all in (this is because we will not add 1 to denominator of raise fraction)
+    def update_stats(self, street, player, action, allin = False):
         if street == 0:
             if player == 'me':
                 if action == 'bet': 
@@ -372,7 +386,7 @@ class Player(Bot):
                 if action == 'call':
                     self.my_preflop_call[0] += 1
                     self.my_preflop_call[1] += 1
-                    self.my_preflop_raise[1] += 1
+                    if not allin: self.my_preflop_raise[1] += 1
                 if action == 'raise':
                     self.my_preflop_raise[0] += 1
                     self.my_preflop_call[1] += 1
@@ -389,7 +403,7 @@ class Player(Bot):
                 if action == 'call':
                     self.opp_preflop_call[0] += 1
                     self.opp_preflop_call[1] += 1
-                    self.opp_preflop_raise[1] += 1
+                    if not allin: self.opp_preflop_raise[1] += 1
                 if action == 'raise':
                     self.opp_preflop_raise[0] += 1
                     self.opp_preflop_call[1] += 1
@@ -407,7 +421,7 @@ class Player(Bot):
                 if action == 'call':
                     self.my_flop_call[0] += 1
                     self.my_flop_call[1] += 1
-                    self.my_flop_raise[1] += 1
+                    if not allin: self.my_flop_raise[1] += 1
                 if action == 'raise':
                     self.my_flop_raise[0] += 1
                     self.my_flop_call[1] += 1
@@ -424,7 +438,7 @@ class Player(Bot):
                 if action == 'call':
                     self.opp_flop_call[0] += 1
                     self.opp_flop_call[1] += 1
-                    self.opp_flop_raise[1] += 1
+                    if not allin: self.opp_flop_raise[1] += 1
                 if action == 'raise':
                     self.opp_flop_raise[0] += 1
                     self.opp_flop_call[1] += 1
@@ -442,7 +456,7 @@ class Player(Bot):
                 if action == 'call':
                     self.my_turn_call[0] += 1
                     self.my_turn_call[1] += 1
-                    self.my_turn_raise[1] += 1
+                    if not allin: self.my_turn_raise[1] += 1
                 if action == 'raise':
                     self.my_turn_raise[0] += 1
                     self.my_turn_call[1] += 1
@@ -459,7 +473,7 @@ class Player(Bot):
                 if action == 'call':
                     self.opp_turn_call[0] += 1
                     self.opp_turn_call[1] += 1
-                    self.opp_turn_raise[1] += 1
+                    if not allin: self.opp_turn_raise[1] += 1
                 if action == 'raise':
                     self.opp_turn_raise[0] += 1
                     self.opp_turn_call[1] += 1
@@ -477,7 +491,7 @@ class Player(Bot):
                 if action == 'call':
                     self.my_river_call[0] += 1
                     self.my_river_call[1] += 1
-                    self.my_river_raise[1] += 1
+                    if not allin: self.my_river_raise[1] += 1
                 if action == 'raise':
                     self.my_river_raise[0] += 1
                     self.my_river_call[1] += 1
@@ -494,7 +508,7 @@ class Player(Bot):
                 if action == 'call':
                     self.opp_river_call[0] += 1
                     self.opp_river_call[1] += 1
-                    self.opp_river_raise[1] += 1
+                    if not allin: self.opp_river_raise[1] += 1
                 if action == 'raise':
                     self.opp_river_raise[0] += 1
                     self.opp_river_call[1] += 1
@@ -513,6 +527,8 @@ class Player(Bot):
         Returns:
         Your action.
         '''
+
+        '''
         roundsleft = 1000-game_state.round_num
         
         necessarylead = 1.5*roundsleft
@@ -525,6 +541,7 @@ class Player(Bot):
             if CheckAction in round_state.legal_actions():
                 return CheckAction()
             return FoldAction()
+        '''
         
         legal_actions = round_state.legal_actions()  # the actions you are allowed to take
         if legal_actions == {CheckAction}:
